@@ -109,6 +109,23 @@ def download_crypto_data(tickers, start_date="2017-01-01"):
         columns='Ticker', 
         values='r'
     )
+    
+    # Ensure column names are clean strings
+    returns_matrix.columns = [str(col).strip() for col in returns_matrix.columns]
+    returns_matrix = returns_matrix.loc[:, returns_matrix.columns != '']  # Remove empty columns
+    
+    # Remove any columns that might have become tuples or other non-string types
+    valid_columns = []
+    for col in returns_matrix.columns:
+        if isinstance(col, (tuple, list)):
+            # If it's a tuple/list, take the last non-empty element
+            col_str = str([x for x in col if x][-1]) if col else "Unknown"
+        else:
+            col_str = str(col)
+        valid_columns.append(col_str)
+    
+    returns_matrix.columns = valid_columns
+    
     company_returns = {
         ticker: returns_matrix[ticker].dropna().values 
         for ticker in returns_matrix.columns
@@ -298,6 +315,11 @@ if page == "🏠 Home & Data Loading":
             combined_data, returns_matrix, company_returns = download_crypto_data(tickers, start_date.strftime('%Y-%m-%d'))
             
             if combined_data is not None:
+                # Debug information
+                st.info(f"📊 Data loaded: {len(company_returns)} assets")
+                st.info(f"📅 Date range: {returns_matrix.index.min()} to {returns_matrix.index.max()}")
+                st.info(f"🏷️ Assets: {list(returns_matrix.columns)}")
+                
                 st.session_state.combined_data = combined_data
                 st.session_state.returns_data = returns_matrix
                 st.session_state.company_returns = company_returns
@@ -314,14 +336,28 @@ if page == "🏠 Home & Data Loading":
         # Interactive plot of returns
         fig = go.Figure()
         
-        for ticker in st.session_state.returns_data.columns:
-            fig.add_trace(go.Scatter(
-                x=st.session_state.returns_data.index,
-                y=st.session_state.returns_data[ticker],
-                mode='lines',
-                name=ticker,
-                line=dict(width=1.5)
-            ))
+        try:
+            for ticker in st.session_state.returns_data.columns:
+                # Ensure ticker name is a string and clean
+                if isinstance(ticker, (tuple, list)):
+                    # If it's a tuple/list, take the last non-empty element
+                    ticker_name = str([x for x in ticker if x][-1]) if ticker else "Unknown"
+                else:
+                    ticker_name = str(ticker).strip() if ticker else "Unknown"
+                
+                if ticker_name and ticker_name != "":
+                    fig.add_trace(go.Scatter(
+                        x=st.session_state.returns_data.index,
+                        y=st.session_state.returns_data[ticker],
+                        mode='lines',
+                        name=ticker_name,
+                        line=dict(width=1.5)
+                    ))
+        except Exception as e:
+            st.error(f"Error creating plot: {str(e)}")
+            st.write("Debug info:")
+            st.write(f"Columns: {list(st.session_state.returns_data.columns)}")
+            st.write(f"Column types: {[type(col) for col in st.session_state.returns_data.columns]}")
         
         fig.update_layout(
             title="Daily Log Returns for All Cryptocurrencies",
@@ -443,9 +479,23 @@ elif page == "📈 Time Series Analysis":
         
         # Significant lags table
         st.subheader("📊 Significant Lags")
+        
+        # Ensure both lists have the same length for DataFrame creation
+        max_lags_to_show = 10
+        acf_lags_display = (sig_acf[:max_lags_to_show] if sig_acf else []) + [''] * max_lags_to_show
+        pacf_lags_display = (sig_pacf[:max_lags_to_show] if sig_pacf else []) + [''] * max_lags_to_show
+        
+        # Truncate to exactly max_lags_to_show elements
+        acf_lags_display = acf_lags_display[:max_lags_to_show]
+        pacf_lags_display = pacf_lags_display[:max_lags_to_show]
+        
+        # Replace empty strings with 'None' for better display
+        acf_lags_display = [str(lag) if lag != '' else 'None' for lag in acf_lags_display]
+        pacf_lags_display = [str(lag) if lag != '' else 'None' for lag in pacf_lags_display]
+        
         sig_lags_df = pd.DataFrame({
-            'ACF Significant Lags': sig_acf[:10] if sig_acf else ['None'],
-            'PACF Significant Lags': sig_pacf[:10] if sig_pacf else ['None']
+            'ACF Significant Lags': acf_lags_display,
+            'PACF Significant Lags': pacf_lags_display
         })
         st.dataframe(sig_lags_df)
     
@@ -929,12 +979,14 @@ elif page == "💼 Portfolio Optimization":
         ))
         
         # Individual assets
+        # Ensure text labels are strings
+        asset_labels = [str(asset) for asset in mean_returns.index]
         fig.add_trace(go.Scatter(
             x=volatilities * 100,
             y=mean_returns * 100,
             mode='markers+text',
             name='Individual Assets',
-            text=mean_returns.index,
+            text=asset_labels,
             textposition="top center",
             marker=dict(size=10, color='red')
         ))
@@ -987,11 +1039,13 @@ elif page == "💼 Portfolio Optimization":
         fig_weights = go.Figure()
         
         for asset in mean_returns.index:
+            # Ensure asset name is a string
+            asset_name = str(asset) if not isinstance(asset, str) else asset
             fig_weights.add_trace(go.Scatter(
                 x=weights_df['Volatility'] * 100,
                 y=weights_df[asset] * 100,
                 mode='lines',
-                name=asset,
+                name=asset_name,
                 stackgroup='one' if not allow_short_selling else None
             ))
         
@@ -1595,12 +1649,14 @@ elif page == "🎯 Simple Index Model":
             asset_vols = np.sqrt(np.diag(cov_sim_annual)) * 100
             asset_rets = mean_returns_annual.values * 100
             
+            # Ensure asset names are strings
+            asset_labels = [str(asset) for asset in assets]
             fig_sim.add_trace(go.Scatter(
                 x=asset_vols,
                 y=asset_rets,
                 mode='markers+text',
                 name='Individual Assets',
-                text=assets,
+                text=asset_labels,
                 textposition="top center",
                 marker=dict(size=10, color='red')
             ))
